@@ -443,7 +443,7 @@ class PurchaseInvoice(BuyingController):
 		else:
 			self.stock_received_but_not_billed = None
 			self.expenses_included_in_valuation = None
-		
+
 		self.negative_expense_to_be_booked = 0.0
 		gl_entries = []
 
@@ -457,7 +457,7 @@ class PurchaseInvoice(BuyingController):
 		self.make_internal_transfer_gl_entries(gl_entries)
 
 		gl_entries = make_regional_gl_entries(gl_entries, self)
-		
+
 		gl_entries = merge_similar_entries(gl_entries)
 
 		self.make_payment_gl_entries(gl_entries)
@@ -480,7 +480,7 @@ class PurchaseInvoice(BuyingController):
 		grand_total = self.rounded_total if (self.rounding_adjustment and self.rounded_total) else self.grand_total
 
 		if grand_total and not self.is_internal_transfer():
-				# Didnot use base_grand_total to book rounding loss gle
+				# Did not use base_grand_total to book rounding loss gle
 				grand_total_in_company_currency = flt(grand_total * self.conversion_rate,
 					self.precision("grand_total"))
 				gl_entries.append(
@@ -511,8 +511,8 @@ class PurchaseInvoice(BuyingController):
 		voucher_wise_stock_value = {}
 		if self.update_stock:
 			for d in frappe.get_all('Stock Ledger Entry',
-				fields = ["voucher_detail_no", "stock_value_difference"], filters={'voucher_no': self.name}):
-				voucher_wise_stock_value.setdefault(d.voucher_detail_no, d.stock_value_difference)
+				fields = ["voucher_detail_no", "stock_value_difference", "warehouse"], filters={'voucher_no': self.name}):
+				voucher_wise_stock_value.setdefault((d.voucher_detail_no, d.warehouse), d.stock_value_difference)
 
 		valuation_tax_accounts = [d.account_head for d in self.get("taxes")
 			if d.category in ('Valuation', 'Total and Valuation')
@@ -563,16 +563,17 @@ class PurchaseInvoice(BuyingController):
 							)
 
 					else:
-						gl_entries.append(
-							self.get_gl_dict({
-								"account": item.expense_account,
-								"against": self.supplier,
-								"debit": warehouse_debit_amount,
-								"remarks": self.get("remarks") or _("Accounting Entry for Stock"),
-								"cost_center": item.cost_center,
-								"project": item.project or self.project
-							}, account_currency, item=item)
-						)
+						if not self.is_internal_transfer():
+							gl_entries.append(
+								self.get_gl_dict({
+									"account": item.expense_account,
+									"against": self.supplier,
+									"debit": warehouse_debit_amount,
+									"remarks": self.get("remarks") or _("Accounting Entry for Stock"),
+									"cost_center": item.cost_center,
+									"project": item.project or self.project
+								}, account_currency, item=item)
+							)
 
 					# Amount added through landed-cost-voucher
 					if landed_cost_entries:
@@ -582,7 +583,8 @@ class PurchaseInvoice(BuyingController):
 								"against": item.expense_account,
 								"cost_center": item.cost_center,
 								"remarks": self.get("remarks") or _("Accounting Entry for Stock"),
-								"credit": flt(amount),
+								"credit": flt(amount["base_amount"]),
+								"credit_in_account_currency": flt(amount["amount"]),
 								"project": item.project or self.project
 							}, item=item))
 
@@ -624,13 +626,14 @@ class PurchaseInvoice(BuyingController):
 							if expense_booked_in_pr:
 								expense_account = service_received_but_not_billed_account
 
-					gl_entries.append(self.get_gl_dict({
-							"account": expense_account,
-							"against": self.supplier,
-							"debit": amount,
-							"cost_center": item.cost_center,
-							"project": item.project or self.project
-						}, account_currency, item=item))
+					if not self.is_internal_transfer():
+						gl_entries.append(self.get_gl_dict({
+								"account": expense_account,
+								"against": self.supplier,
+								"debit": amount,
+								"cost_center": item.cost_center,
+								"project": item.project or self.project
+							}, account_currency, item=item))
 
 					# If asset is bought through this document and not linked to PR
 					if self.update_stock and item.landed_cost_voucher_amount:
@@ -795,10 +798,10 @@ class PurchaseInvoice(BuyingController):
 
 		# Stock ledger value is not matching with the warehouse amount
 		if (self.update_stock and voucher_wise_stock_value.get(item.name) and
-			warehouse_debit_amount != flt(voucher_wise_stock_value.get(item.name), net_amt_precision)):
+			warehouse_debit_amount != flt(voucher_wise_stock_value.get((item.name, item.warehouse)), net_amt_precision)):
 
 			cost_of_goods_sold_account = self.get_company_default("default_expense_account")
-			stock_amount = flt(voucher_wise_stock_value.get(item.name), net_amt_precision)
+			stock_amount = flt(voucher_wise_stock_value.get((item.name, item.warehouse)), net_amt_precision)
 			stock_adjustment_amt = warehouse_debit_amount - stock_amount
 
 			gl_entries.append(
@@ -965,7 +968,7 @@ class PurchaseInvoice(BuyingController):
 		# base_rounding_adjustment may become zero due to small precision
 		# eg: rounding_adjustment = 0.01 and exchange rate = 0.05 and precision of base_rounding_adjustment is 2
 		#	then base_rounding_adjustment becomes zero and error is thrown in GL Entry
-		if self.rounding_adjustment and self.base_rounding_adjustment:
+		if not self.is_internal_transfer() and self.rounding_adjustment and self.base_rounding_adjustment:
 			round_off_account, round_off_cost_center = \
 				get_round_off_account_and_cost_center(self.company)
 
@@ -999,10 +1002,10 @@ class PurchaseInvoice(BuyingController):
 			self.delete_auto_created_batches()
 
 		self.make_gl_entries_on_cancel()
-		
+
 		if self.update_stock == 1:
 			self.repost_future_sle_and_gle()
-		
+
 		self.update_project()
 		frappe.db.set(self, 'status', 'Cancelled')
 
@@ -1204,3 +1207,41 @@ def make_inter_company_sales_invoice(source_name, target_doc=None):
 
 def on_doctype_update():
 	frappe.db.add_index("Purchase Invoice", ["supplier", "is_return", "return_against"])
+
+@frappe.whitelist()
+def make_purchase_receipt(source_name, target_doc=None):
+	def update_item(obj, target, source_parent):
+		target.qty = flt(obj.qty) - flt(obj.received_qty)
+		target.received_qty = flt(obj.qty) - flt(obj.received_qty)
+		target.stock_qty = (flt(obj.qty) - flt(obj.received_qty)) * flt(obj.conversion_factor)
+		target.amount = (flt(obj.qty) - flt(obj.received_qty)) * flt(obj.rate)
+		target.base_amount = (flt(obj.qty) - flt(obj.received_qty)) * \
+			flt(obj.rate) * flt(source_parent.conversion_rate)
+
+	doc = get_mapped_doc("Purchase Invoice", source_name, {
+		"Purchase Invoice": {
+			"doctype": "Purchase Receipt",
+			"validation": {
+				"docstatus": ["=", 1],
+			}
+		},
+		"Purchase Invoice Item": {
+			"doctype": "Purchase Receipt Item",
+			"field_map": {
+				"name": "purchase_invoice_item",
+				"parent": "purchase_invoice",
+				"bom": "bom",
+				"purchase_order": "purchase_order",
+				"po_detail": "purchase_order_item",
+				"material_request": "material_request",
+				"material_request_item": "material_request_item"
+			},
+			"postprocess": update_item,
+			"condition": lambda doc: abs(doc.received_qty) < abs(doc.qty)
+		},
+		"Purchase Taxes and Charges": {
+			"doctype": "Purchase Taxes and Charges"
+		}
+	}, target_doc)
+
+	return doc

@@ -19,7 +19,7 @@ class Quotation(SellingController):
 			self.indicator_color = 'blue'
 			self.indicator_title = 'Submitted'
 		if self.valid_till and getdate(self.valid_till) < getdate(nowdate()):
-			self.indicator_color = 'darkgrey'
+			self.indicator_color = 'gray'
 			self.indicator_title = 'Expired'
 
 	def validate(self):
@@ -64,6 +64,7 @@ class Quotation(SellingController):
 		opp = frappe.get_doc("Opportunity", opportunity)
 		opp.set_status(status=status, update=True)
 
+	@frappe.whitelist()
 	def declare_enquiry_lost(self, lost_reasons_list, detailed_reason=None):
 		if not self.has_sales_order():
 			get_lost_reasons = frappe.get_list('Quotation Lost Reason',

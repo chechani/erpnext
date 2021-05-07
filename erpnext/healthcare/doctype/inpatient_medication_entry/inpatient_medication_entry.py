@@ -14,6 +14,7 @@ class InpatientMedicationEntry(Document):
 	def validate(self):
 		self.validate_medication_orders()
 
+	@frappe.whitelist()
 	def get_medication_orders(self):
 		# pull inpatient medication orders based on selected filters
 		orders = get_pending_medication_orders(self)
@@ -264,7 +265,7 @@ def get_filters(entry):
 
 def get_current_healthcare_service_unit(inpatient_record):
 	ip_record = frappe.get_doc('Inpatient Record', inpatient_record)
-	if ip_record.inpatient_occupancies:
+	if ip_record.status in ['Admitted', 'Discharge Scheduled'] and ip_record.inpatient_occupancies:
 		return ip_record.inpatient_occupancies[-1].service_unit
 	return
 

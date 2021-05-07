@@ -1,22 +1,23 @@
 // Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
-// print heading
-cur_frm.pformat.print_heading = 'Invoice';
-
 {% include 'erpnext/selling/sales_common.js' %};
-
-
 frappe.provide("erpnext.accounts");
+
+
 erpnext.accounts.SalesInvoiceController = erpnext.selling.SellingController.extend({
 	setup: function(doc) {
 		this.setup_posting_date_time_check();
 		this._super(doc);
 	},
+	company: function() {
+		erpnext.accounts.dimensions.update_dimension(this.frm, this.frm.doctype);
+	},
 	onload: function() {
 		var me = this;
 		this._super();
 
+		this.frm.ignore_doctypes_on_cancel_all = ['POS Invoice'];
 		if(!this.frm.doc.__islocal && !this.frm.doc.customer && this.frm.doc.debit_to) {
 			// show debit_to in print format
 			this.frm.set_df_property("debit_to", "print_hide", 0);
@@ -33,6 +34,7 @@ erpnext.accounts.SalesInvoiceController = erpnext.selling.SellingController.exte
 			me.frm.refresh_fields();
 		}
 		erpnext.queries.setup_warehouse_query(this.frm);
+		erpnext.accounts.dimensions.setup_dimension_filters(this.frm, this.frm.doctype);
 	},
 
 	refresh: function(doc, dt, dn) {
@@ -126,16 +128,15 @@ erpnext.accounts.SalesInvoiceController = erpnext.selling.SellingController.exte
 
 		this.set_default_print_format();
 		if (doc.docstatus == 1 && !doc.inter_company_invoice_reference) {
-			frappe.model.with_doc("Customer", me.frm.doc.customer, function() {
-				var customer = frappe.model.get_doc("Customer", me.frm.doc.customer);
-				var internal = customer.is_internal_customer;
-				var disabled = customer.disabled;
-				if (internal == 1 && disabled == 0) {
-					me.frm.add_custom_button("Inter Company Invoice", function() {
-						me.make_inter_company_invoice();
-					}, __('Create'));
-				}
-			});
+			let internal = me.frm.doc.is_internal_customer;
+			if (internal) {
+				let button_label = (me.frm.doc.company === me.frm.doc.represents_company) ? "Internal Purchase Invoice" :
+					"Inter Company Purchase Invoice";
+
+				me.frm.add_custom_button(button_label, function() {
+					me.make_inter_company_invoice();
+				}, __('Create'));
+			}
 		}
 	},
 
@@ -571,15 +572,6 @@ frappe.ui.form.on('Sales Invoice', {
 			};
 		});
 
-		frm.set_query("cost_center", function() {
-			return {
-				filters: {
-					company: frm.doc.company,
-					is_group: 0
-				}
-			};
-		});
-
 		frm.set_query("unrealized_profit_loss_account", function() {
 			return {
 				filters: {
@@ -592,7 +584,7 @@ frappe.ui.form.on('Sales Invoice', {
 
 		frm.custom_make_buttons = {
 			'Delivery Note': 'Delivery',
-			'Sales Invoice': 'Sales Return',
+			'Sales Invoice': 'Return / Credit Note',
 			'Payment Request': 'Payment Request',
 			'Payment Entry': 'Payment'
 		},
@@ -674,12 +666,12 @@ frappe.ui.form.on('Sales Invoice', {
 		};
 	},
 	// When multiple companies are set up. in case company name is changed set default company address
-	company:function(frm){
-		if (frm.doc.company)
-		{
+	company: function(frm){
+		if (frm.doc.company) {
 			frappe.call({
-				method:"erpnext.setup.doctype.company.company.get_default_company_address",
-				args:{name:frm.doc.company, existing_address: frm.doc.company_address},
+				method: "erpnext.setup.doctype.company.company.get_default_company_address",
+				args: {name:frm.doc.company, existing_address: frm.doc.company_address || ""},
+				debounce: 2000,
 				callback: function(r){
 					if (r.message){
 						frm.set_value("company_address",r.message)
@@ -700,6 +692,7 @@ frappe.ui.form.on('Sales Invoice', {
 				refresh_field(['timesheets'])
 			}
 		})
+		frm.refresh();
 	},
 
 	onload: function(frm) {
@@ -815,6 +808,65 @@ frappe.ui.form.on('Sales Invoice', {
 	},
 
 	refresh: function(frm) {
+		if (frm.doc.project) {
+			frm.add_custom_button(__('Fetch Timesheet'), function() {
+				let d = new frappe.ui.Dialog({
+					title: __('Fetch Timesheet'),
+					fields: [
+						{
+							"label" : "From",
+							"fieldname": "from_time",
+							"fieldtype": "Date",
+							"reqd": 1,
+						},
+						{
+							fieldtype: 'Column Break',
+							fieldname: 'col_break_1',
+						},
+						{
+							"label" : "To",
+							"fieldname": "to_time",
+							"fieldtype": "Date",
+							"reqd": 1,
+						}
+					],
+					primary_action: function() {
+						let data = d.get_values();
+						frappe.call({
+							method: "erpnext.projects.doctype.timesheet.timesheet.get_projectwise_timesheet_data",
+							args: {
+								from_time: data.from_time,
+								to_time: data.to_time,
+								project: frm.doc.project
+							},
+							callback: function(r) {
+								if(!r.exc) {
+									if(r.message.length > 0) {
+										frm.clear_table('timesheets')
+										r.message.forEach((d) => {
+											frm.add_child('timesheets',{
+												'time_sheet': d.parent,
+												'billing_hours': d.billing_hours,
+												'billing_amount': d.billing_amt,
+												'timesheet_detail': d.name
+											});
+										});
+										frm.refresh_field('timesheets')
+									}
+									else {
+										frappe.msgprint(__('No Timesheet Found.'))
+									}
+									d.hide();
+								}
+							}
+						});
+					},
+					primary_action_label: __('Get Timesheets')
+				});
+				d.show();
+			})
+		}
+
 		if (frappe.boot.active_domains.includes("Healthcare")) {
 			frm.set_df_property("patient", "hidden", 0);
 			frm.set_df_property("patient_name", "hidden", 0);
@@ -861,7 +913,7 @@ frappe.ui.form.on('Sales Invoice Timesheet', {
 				},
 				callback: function(r, rt) {
 					if(r.message){
-						data = r.message;
+						let data = r.message;
 						frappe.model.set_value(cdt, cdn, "billing_hours", data.billing_hours);
 						frappe.model.set_value(cdt, cdn, "billing_amount", data.billing_amount);
 						frappe.model.set_value(cdt, cdn, "timesheet_detail", data.timesheet_detail);

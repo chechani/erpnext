@@ -2,6 +2,7 @@
 // License: GNU General Public License v3. See license.txt
 
 // eslint-disable-next-line
+frappe.provide("erpnext.accounts.dimensions");
 {% include 'erpnext/public/js/controllers/buying.js' %};
 
 frappe.ui.form.on('Material Request', {
@@ -66,6 +67,12 @@ frappe.ui.form.on('Material Request', {
 				filters: {'company': doc.company}
 			};
 		});
+
+		erpnext.accounts.dimensions.setup_dimension_filters(frm, frm.doctype);
+	},
+
+	company: function(frm) {
+		erpnext.accounts.dimensions.update_dimension(frm, frm.doctype);
 	},
 
 	onload_post_render: function(frm) {
@@ -347,6 +354,10 @@ frappe.ui.form.on('Material Request', {
 	},
 	material_request_type: function(frm) {
 		frm.toggle_reqd('customer', frm.doc.material_request_type=="Customer Provided");
+
+		if (frm.doc.material_request_type !== 'Material Transfer' && frm.doc.set_from_warehouse) {
+			frm.set_value('set_from_warehouse', '');
+		}
 	},
 
 });
@@ -422,12 +433,20 @@ erpnext.buying.MaterialRequestController = erpnext.buying.BuyingController.exten
 			if (doc.material_request_type == "Customer Provided") {
 				return{
 					query: "erpnext.controllers.queries.item_query",
-					filters:{ 'customer': me.frm.doc.customer }
+					filters:{ 
+						'customer': me.frm.doc.customer,
+						'is_stock_item':1
+					}
 				}
-			} else if (doc.material_request_type != "Manufacture") {
+			} else if (doc.material_request_type == "Purchase") {
 				return{
 					query: "erpnext.controllers.queries.item_query",
 					filters: {'is_purchase_item': 1}
+				}
+			} else {
+				return{
+					query: "erpnext.controllers.queries.item_query",
+					filters: {'is_stock_item': 1}
 				}
 			}
 		});
