@@ -171,18 +171,19 @@ class BuyingController(StockController):
 
 			TODO: rename item_tax_amount to valuation_tax_amount
 		"""
+		stock_and_asset_items = []
 		stock_and_asset_items = self.get_stock_items() + self.get_asset_items()
 
 		stock_and_asset_items_qty, stock_and_asset_items_amount = 0, 0
 		last_item_idx = 1
 		for d in self.get("items"):
-			if d.item_code and d.item_code in stock_and_asset_items:
+			if (d.item_code and d.item_code in stock_and_asset_items):
 				stock_and_asset_items_qty += flt(d.qty)
 				stock_and_asset_items_amount += flt(d.base_net_amount)
 				last_item_idx = d.idx
 
-		total_valuation_amount = sum([flt(d.base_tax_amount_after_discount_amount) for d in self.get("taxes")
-			if d.category in ["Valuation", "Valuation and Total"]])
+		total_valuation_amount = sum(flt(d.base_tax_amount_after_discount_amount) for d in self.get("taxes")
+			if d.category in ["Valuation", "Valuation and Total"])
 
 		valuation_amount_adjustment = total_valuation_amount
 		for i, item in enumerate(self.get("items")):
@@ -325,7 +326,7 @@ class BuyingController(StockController):
 	def update_raw_materials_supplied_based_on_stock_entries(self):
 		self.set('supplied_items', [])
 
-		purchase_orders = set([d.purchase_order for d in self.items])
+		purchase_orders = set(d.purchase_order for d in self.items)
 
 		# qty of raw materials backflushed (for each item per purchase order)
 		backflushed_raw_materials_map = get_backflushed_subcontracted_raw_materials(purchase_orders)
@@ -683,7 +684,8 @@ class BuyingController(StockController):
 			self.process_fixed_asset()
 			self.update_fixed_asset(field)
 
-		update_last_purchase_rate(self, is_submit = 1)
+		if self.doctype in ['Purchase Order', 'Purchase Receipt']:
+			update_last_purchase_rate(self, is_submit = 1)
 
 	def on_cancel(self):
 		super(BuyingController, self).on_cancel()
@@ -691,7 +693,9 @@ class BuyingController(StockController):
 		if self.get('is_return'):
 			return
 
-		update_last_purchase_rate(self, is_submit = 0)
+		if self.doctype in ['Purchase Order', 'Purchase Receipt']:
+			update_last_purchase_rate(self, is_submit = 0)
+
 		if self.doctype in ['Purchase Receipt', 'Purchase Invoice']:
 			field = 'purchase_invoice' if self.doctype == 'Purchase Invoice' else 'purchase_receipt'
 
